@@ -22,9 +22,9 @@ contract TokenSwap is ITokenSwapPair, ERC20 {
   uint112 private reserve0; // amount of token that THIS CONTRACT holds (NOT token0). Accessible via getReserves
   uint112 private reserve1; // amount of token that THIS CONTRACT holds (NOT token1). Accessible via getReserves
   uint32 private blockTimestampLast;  // Accessible via getReserves
-
-  uint public price0CumululativeLast; //TODO: not sure what is does
-  uint public price1CumululativeLast; //TODO: not sure what is does
+  
+  uint public price0CumulativeLast; //TODO: not sure what is does
+  uint public price1CumulativeLast; //TODO: not sure what is does
   uint32 private kLast; // reserve0 * reserve1 = k
 
   uint private unlocked = 1;
@@ -74,6 +74,17 @@ contract TokenSwap is ITokenSwapPair, ERC20 {
       //TODO: encode는 절대 최대수를 못넘게 하는 역할인듯? 
       //TODO: uqdiv는 왜 arg를 하나만 받지?
       //TODO: understand this: https://www.rareskills.io/post/twap-uniswap-v2
+      // TWAP (time-weighted average price). It's a pricing algorithm used to calculate the average price of an asset over a set period.
+      // a TWAP weights price by how long the price stays at a certain level.
+      /**
+        ex1) Over the last day, the price of an asset was $10 for the first 12 hours and $11 for the second 12 hours. 
+        The average price is the same as the time weighted average price: $10.5.
+        ex2) Over the last day, the price of an asset was $10 for the first 23 hours and $11 for the most recent one. 
+        The expected average price should be closer to $10 than $11, but it will still be in between those values. Specifically, 
+        it will be ($10 * 23 + $11 * 1) / 24 = $10.0417
+        ex3) Over the last day, the price of an asset was $10 for the first hour, and $11 for the most recent 23 hours. 
+        We expect the TWAP to be closer to $11 than 10. Specifically, it will be ($10 * 1 + $11 * 23) / 24 = $10.9583
+      */
       price0CumulativeLast += uint(UQ112x112.encode(_reserve1).uqdiv(_reserve0)) * timeElapsed;
       price1CumulativeLast += uint(UQ112x112.encode(_reserve0).uqdiv(_reserve1)) * timeElapsed;
     }
