@@ -8,8 +8,7 @@ import './interfaces/ITokenSwapFactory.sol';
 import './interfaces/ITokenSwapCallee.sol';
 
 contract TokenSwap is ITokenSwapPair, ERC20 {
-  //TODO: why not hard code MINIMUM_LIQUIDITY as 1000 ?
-  uint public constant MINIMUM_LIQUIDITY = 10**3;  // it is used when there is no totalSupply (share-token) 
+  uint public constant MINIMUM_LIQUIDITY = 10**3;  // it is used when there is no totalSupply (share-token) => lock
   bytes4 private constant SELECTOR = bytes4(keccak256(bytes('transfer(address,uint256)')));
 
   address public factory;  // the one that create swap contract
@@ -22,9 +21,12 @@ contract TokenSwap is ITokenSwapPair, ERC20 {
   uint112 private reserve0; // amount of token that THIS CONTRACT holds (NOT token0). Accessible via getReserves
   uint112 private reserve1; // amount of token that THIS CONTRACT holds (NOT token1). Accessible via getReserves
   uint32 private blockTimestampLast;  // Accessible via getReserves
-  
-  uint public price0CumulativeLast; //TODO: not sure what is does
-  uint public price1CumulativeLast; //TODO: not sure what is does
+  /**
+   it's not internally used. 
+   this is for knowing average prices of token0,1 by time passed. By checking 'blockTimestampLast', user can know if anything is updated or not.
+   */
+  uint public price0CumulativeLast;
+  uint public price1CumulativeLast;
   uint32 private kLast; // reserve0 * reserve1 = k
 
   uint private unlocked = 1;
@@ -66,14 +68,45 @@ contract TokenSwap is ITokenSwapPair, ERC20 {
   }
 
   function _update(uint balance0, uint balance1, uint112 _reserve0, uint112 _reserve1) private {
-    // require(balance0 <= uint112(-1) && balance1 <= uint112(-1), 'TokenSwap: OVERFLOW'); //TODO: since Solidity 0.8+ has build in SafeMath, does it need?
-    uint32 blockTimestamp = uint32(block.timestamp % 2**32);  // TODO: why is does that?
+    /**
+      balance0 is uint which means it can over uint112
+      then there is this code reserve0 = uint112(balance0); reserve0 is uint112
+      so if balance0 is more then uint112, then uint112(balance0) causes a serious problem
+      if balance0 is (type(uint112).max + 1) then reserve0 will be 1 instead of 4294967291
+    */
+    require(balance0 <= tpye(uint112).max && balance1 <= tpye(uint112).max, 'TokenSwap: OVERFLOW');
+    uint32 blockTimestamp = uint32(block.timestamp % 2**32);  // TODO: why it does that?
     uint32 timeElapsed = blockTimestamp - blockTimestampLast; // to check how long time is passed
 
     if(timeElapsed > 0 && _reserve0 != 0 && _reserve1 != 0) {
-      //TODO: encode는 절대 최대수를 못넘게 하는 역할인듯? 
-      //TODO: uqdiv는 왜 arg를 하나만 받지?
-      //TODO: understand this: https://www.rareskills.io/post/twap-uniswap-v2
+      /**
+      purpose of 'encode':
+      uint224 constant Q112 = 2**112; // scailing factor for decimal point
+      function encode(uint112 y) internal pure returns (uint224 z) {
+        z = uint224(y) * Q112; // never overflow: make decimal point.
+      }
+      
+      it makes decimal point by adding 2**112. Simply put, if y = 5, z will be 5.0000000...
+      */
+      /**
+      purpose of 'uqdiv'
+      function uqdiv(uint224 x, uint112 y) internal pure returns (uint224 z) {
+        z = x / uint224(y);
+      }
+      By doing so, result (z) can have decimal (ex: x=5 y=2 => 2.5).
+      More precise example:
+      x=5
+      y=2
+
+      (in encode)
+      x = uint224(x) * (2**112)
+
+      (in uqdiv)
+      z = x / uint224(y)
+      z / (2**112) will result 2.5
+      */ 
+      //'using' keyword makes it chain (ex: encode(_reserve1).uqdiv(_reserve0))
+      //https://www.rareskills.io/post/twap-uniswap-v2
       // TWAP (time-weighted average price). It's a pricing algorithm used to calculate the average price of an asset over a set period.
       // a TWAP weights price by how long the price stays at a certain level.
       /**
@@ -85,6 +118,9 @@ contract TokenSwap is ITokenSwapPair, ERC20 {
         ex3) Over the last day, the price of an asset was $10 for the first hour, and $11 for the most recent 23 hours. 
         We expect the TWAP to be closer to $11 than 10. Specifically, it will be ($10 * 1 + $11 * 23) / 24 = $10.9583
       */
+      // reserve0,1 are the ratio of asset weighted by time (timeElapsed)
+      // why it's added up (+=)? Where do we use it? => not internally used. this is for knowing average prices of token0,1 by time passed. By checking 'blockTimestampLast', user can know if anything is updated or not.
+      // 'using' decorator allows chaining function ( ex: a(_x).b(_y) )
       price0CumulativeLast += uint(UQ112x112.encode(_reserve1).uqdiv(_reserve0)) * timeElapsed;
       price1CumulativeLast += uint(UQ112x112.encode(_reserve0).uqdiv(_reserve1)) * timeElapsed;
     }
@@ -96,6 +132,7 @@ contract TokenSwap is ITokenSwapPair, ERC20 {
     emit Sync(reserve0, reserve1);
   }
 
+  // Only called via mint and burn which is infrequent. NOT by swap
   function _mintFee(uint112 _reserve0, uint112 _reserve1) private returns(bool feeOn) {
     address feeTo = ITokenSwapFactory(factory).feeTo();
     feeOn = feeTo != address(0);
@@ -103,16 +140,17 @@ contract TokenSwap is ITokenSwapPair, ERC20 {
 
     if(feeOn) {
       if(_kLast != 0) {
+        // TODO: do it later
         // TODO: should update below since SafeMath is not needed since 0.8.x
         uint rootK = Math.sqrt(uint(_reserve0).mul(_reserve1)); // it's opposite to x * y = k
         uint rootKLast = Math.sqrt(_kLast);
         
-        if (rootK > rootKLast) {  // TODO: I guess it checkes if current K (new values of reserve0 and 1) is higher than last K which means more funds in this contract
+        if (rootK > rootKLast) {  // true means there are more tokens added by LP
           // TODO: I don't understand below logic
-          uint numerator = totalSupply.mul(rootK.sub(rootKLast));
-          uint denominator = rootK.mul(5).add(rootKLast);
+          uint numerator = totalSupply.mul(rootK.sub(rootKLast)); // 분자
+          uint denominator = rootK.mul(5).add(rootKLast);         // 분모
           uint liquidity = numerator / denominator;
-          if (liquidity > 0) _mint(feeTo, liquidity);
+          if (liquidity > 0) _mint(feeTo, liquidity); // TODO: sending fee to the fee-contract?
         }
       }
     } else if (_kLast != 0) {
@@ -146,7 +184,7 @@ contract TokenSwap is ITokenSwapPair, ERC20 {
 
       // TODO: amount0,1 are multiplied by totalSupply then devided by reserve0,1. Why?
       // _reserve0,1 tokens that are stored in this contract. At this point in mint fn, _reserve0,1 are not up to date compared to balance0,1 because 
-      // _reserve0,1 don't have yet what LP sent via transaction. It will be updated via _update()
+      // _reserve0,1 don't have yet what LP sent via transaction. It will be updated via _update() below
       liquidity = Math.min(amount0.mul(_totalSupply) / _reserve0, amount1.mul(_totalSupply) / _reserve1);
       // TODO: the above is :
       // (LP's added token0 * entire total share-tokens) / amount of token0 before LP adds
@@ -155,9 +193,6 @@ contract TokenSwap is ITokenSwapPair, ERC20 {
     require(liquidity > 0, 'TokenSwap: INSUFFICIENT_LIQUIDITY_MINTED');
     _mint(to, liquidity); // create share-token (or another name as LP token)
 
-    // TODO: need confirmation => what _update does is updating
-    // reserve0,1 and reserve0,1 are the reflection of token0,1's balanceOf(address(this)), correct?
-    // if true, the reason why it does is for gas saving? => it's also design. => what's benefit?
     _update(balance0, balance1, _reserve0, _reserve1);
 
     if(feeOn) kLast = uint(reserve0) * uint(reserve1); // x * y = k
