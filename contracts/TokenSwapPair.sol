@@ -9,6 +9,8 @@ import './interfaces/ITokenSwapPair.sol';
 import './interfaces/ITokenSwapFactory.sol';
 import './interfaces/ITokenSwapCallee.sol';
 
+import { UD60x18, ud } from "@prb/math/src/UD60x18.sol";
+
 contract TokenSwap is ITokenSwapPair, ERC20 {
   using SafeERC20 for IERC20;
 
@@ -31,7 +33,7 @@ contract TokenSwap is ITokenSwapPair, ERC20 {
    */
   uint public price0CumulativeLast;
   uint public price1CumulativeLast;
-  uint32 private kLast; // reserve0 * reserve1 = k
+  uint public kLast; // reserve0 * reserve1 = k
 
   uint private unlocked = 1;
   // Below logic prevents reentrancy attack
@@ -42,31 +44,20 @@ contract TokenSwap is ITokenSwapPair, ERC20 {
     unlocked = 1; // will be executed after _;
   }
 
+  constructor(string memory name_, string memory symbol_) ERC20(name_, symbol_) {
+    factory = msg.sender; // the one that creates this contract is the factory contract.
+  }
+
   function getReserves() public view returns (uint112 _reserve0, uint112 _reserve1, uint32 _blockTimestampLast) {
     _reserve0 = reserve0;
     _reserve1 = reserve1;
     _blockTimestampLast = blockTimestampLast;
   }
 
-  event Mint(address indexed sender, uint amount0, uint amount1);
-  event Burn(address indexed sender, uint amount0, uint amount1, address indexed to);
-  event Swap(
-    address indexed sender,
-    uint amount0In,
-    uint amount1In,
-    uint amount0Out,
-    uint amount1Out,
-    address indexed to
-  );
-  event Sync(uint112 reserve0, uint112 reserve1);
-
-  constructor() public {
-    factory = msg.sender; // the one that creates this contract is the factory contract.
-  }
 
   // It will be called once by the factory during deployment and set token contracts
   function initialize(address _token0, address _token1) external {
-    require(msg.sender == factory, "TokenSwap: FORBIDDEN"); // only the onw that created this contract can run this function
+    require(msg.sender == factory, 'TokenSwap: FORBIDDEN'); // only the onw that created this contract can run this function
     token0 = _token0;
     token1 = _token1;
   }
@@ -125,8 +116,12 @@ contract TokenSwap is ITokenSwapPair, ERC20 {
       // reserve0,1 are the ratio of asset weighted by time (timeElapsed)
       // why it's added up (+=)? Where do we use it? => not internally used. this is for knowing average prices of token0,1 by time passed. By checking 'blockTimestampLast', user can know if anything is updated or not.
       // 'using' decorator allows chaining function ( ex: a(_x).b(_y) )
-      price0CumulativeLast += uint(UQ112x112.encode(_reserve1).uqdiv(_reserve0)) * timeElapsed;
-      price1CumulativeLast += uint(UQ112x112.encode(_reserve0).uqdiv(_reserve1)) * timeElapsed;
+      // price0CumulativeLast += uint(UQ112x112.encode(_reserve1).uqdiv(_reserve0)) * timeElapsed;
+      // price1CumulativeLast += uint(UQ112x112.encode(_reserve0).uqdiv(_reserve1)) * timeElapsed;
+      UD60x18 _reserve0Ud = ud(_reserve0);
+      UD60x18 _reserve1Ud = ud(_reserve1);
+      price0CumulativeLast += _reserve1Ud.div(_reserve0Ud).unwrap() * timeElapsed;
+      price1CumulativeLast += _reserve0Ud.div(_reserve1Ud).unwrap() * timeElapsed;
     }
 
     reserve0 = uint112(balance0); // balance0 is from IERC20(token0).balanceOf(address(this))
@@ -151,7 +146,7 @@ contract TokenSwap is ITokenSwapPair, ERC20 {
         
         if (rootK > rootKLast) {  // true means there are more tokens added by LP
           // TODO: I don't understand below logic
-          uint numerator = totalSupply * (rootK - rootKLast);
+          uint numerator = totalSupply() * uint(rootK - rootKLast);
           uint denominator = rootK * 5 + rootKLast;
           uint liquidity = numerator / denominator;
           if (liquidity > 0) _mint(feeTo, liquidity); // TODO: sending fee to the fee-contract?
@@ -165,7 +160,7 @@ contract TokenSwap is ITokenSwapPair, ERC20 {
   // this low-level function should be called from a contract which performs important safety checks
   // mint fn creates share-token for LP (Liquidity Provider) who sent token0,1 to the pool
   function mint(address to) external lock returns(uint liquidity) {
-    (uint112 _reserve0, uint112 _reserve1) = getReserves();   //TODO: why gas savings?
+    (uint112 _reserve0, uint112 _reserve1,) = getReserves();   //TODO: why gas savings?
     // balance0,1 are the most up to date number including the LP sent?
     // TODO: When a LP sends tokens0 and 1, they go directly to token0,1 contract?
     uint balance0 = IERC20(token0).balanceOf(address(this));  // token that is stored in token0 contract. NOT this pair contract.
@@ -176,7 +171,7 @@ contract TokenSwap is ITokenSwapPair, ERC20 {
 
     bool feeOn = _mintFee(_reserve0, _reserve1);
     //TODO: total supply is the total number of share-token, right?
-    uint _totalSupply = totalSupply; // gas savings, must be defined here since totalSupply can update in _mintFee
+    uint _totalSupply = totalSupply(); // gas savings, must be defined here since totalSupply can update in _mintFee
     if(_totalSupply == 0) {
       // TODO: I guess it can be 2 secanarios either no liquidity providing or LP burned tokens?
       // TODO: I don't understand below logic
@@ -214,7 +209,7 @@ contract TokenSwap is ITokenSwapPair, ERC20 {
     uint liquidity = balanceOf(address(this));  // TODO: at this point, share-token is already sent from a LP to this contract
 
     bool feeOn = _mintFee(_reserve0, _reserve1);
-    uint _totalSupply = totalSupply;
+    uint _totalSupply = totalSupply();
 
     // TODO: need confirmation => amount0,1 are the ratio of liquidity of totalSupply (share-token)?
     amount0 = (liquidity * balance0) / _totalSupply;
@@ -265,8 +260,8 @@ contract TokenSwap is ITokenSwapPair, ERC20 {
     //TODO: where is the real implementation of "tokenSwapCall"? and what's the purpose? I guess it's a sort of callback for a custom function?
     if(data.length > 0) ITokenSwapCallee(to).tokenSwapCall(msg.sender, amount0Out, amount1Out, data);
 
-    balance0 = IERC20(_token0).balance0(address(this));
-    balance1 = IERC20(_token1).balance0(address(this));
+    balance0 = IERC20(_token0).balanceOf(address(this));
+    balance1 = IERC20(_token1).balanceOf(address(this));
     }
 
 
