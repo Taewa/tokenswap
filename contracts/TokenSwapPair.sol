@@ -1,13 +1,17 @@
-pragma solidity 0.8.19;
+pragma solidity 0.8.20;
 
 import '@openzeppelin/contracts/token/ERC20/ERC20.sol';
+import '@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol';
 import '@openzeppelin/contracts/interfaces/IERC20.sol';
+import '@openzeppelin/contracts/utils/math/Math.sol';
 
 import './interfaces/ITokenSwapPair.sol';
 import './interfaces/ITokenSwapFactory.sol';
 import './interfaces/ITokenSwapCallee.sol';
 
 contract TokenSwap is ITokenSwapPair, ERC20 {
+  using SafeERC20 for IERC20;
+
   uint public constant MINIMUM_LIQUIDITY = 10**3;  // it is used when there is no totalSupply (share-token) => lock
   bytes4 private constant SELECTOR = bytes4(keccak256(bytes('transfer(address,uint256)')));
 
@@ -74,7 +78,7 @@ contract TokenSwap is ITokenSwapPair, ERC20 {
       so if balance0 is more then uint112, then uint112(balance0) causes a serious problem
       if balance0 is (type(uint112).max + 1) then reserve0 will be 1 instead of 4294967291
     */
-    require(balance0 <= tpye(uint112).max && balance1 <= tpye(uint112).max, 'TokenSwap: OVERFLOW');
+    require(balance0 <= type(uint112).max && balance1 <= type(uint112).max, 'TokenSwap: OVERFLOW');
     uint32 blockTimestamp = uint32(block.timestamp % 2**32);  // TODO: why it does that?
     uint32 timeElapsed = blockTimestamp - blockTimestampLast; // to check how long time is passed
 
@@ -142,13 +146,13 @@ contract TokenSwap is ITokenSwapPair, ERC20 {
       if(_kLast != 0) {
         // TODO: do it later
         // TODO: should update below since SafeMath is not needed since 0.8.x
-        uint rootK = Math.sqrt(uint(_reserve0).mul(_reserve1)); // it's opposite to x * y = k
+        uint rootK = Math.sqrt(_reserve0 * _reserve1); // it's opposite to x * y = k
         uint rootKLast = Math.sqrt(_kLast);
         
         if (rootK > rootKLast) {  // true means there are more tokens added by LP
           // TODO: I don't understand below logic
-          uint numerator = totalSupply.mul(rootK.sub(rootKLast)); // 분자
-          uint denominator = rootK.mul(5).add(rootKLast);         // 분모
+          uint numerator = totalSupply * (rootK - rootKLast);
+          uint denominator = rootK * 5 + rootKLast;
           uint liquidity = numerator / denominator;
           if (liquidity > 0) _mint(feeTo, liquidity); // TODO: sending fee to the fee-contract?
         }
@@ -176,7 +180,7 @@ contract TokenSwap is ITokenSwapPair, ERC20 {
     if(_totalSupply == 0) {
       // TODO: I guess it can be 2 secanarios either no liquidity providing or LP burned tokens?
       // TODO: I don't understand below logic
-      liquidity = Math.sqrt(amount0.mul(amount1)).sub(MINIMUM_LIQUIDITY);
+      liquidity = Math.sqrt(amount0 * amount1) - MINIMUM_LIQUIDITY;
       _mint(address(0), MINIMUM_LIQUIDITY); // permanently lock the first MINIMUM_LIQUIDITY tokens
 
     } else {
@@ -185,7 +189,7 @@ contract TokenSwap is ITokenSwapPair, ERC20 {
       // TODO: amount0,1 are multiplied by totalSupply then devided by reserve0,1. Why?
       // _reserve0,1 tokens that are stored in this contract. At this point in mint fn, _reserve0,1 are not up to date compared to balance0,1 because 
       // _reserve0,1 don't have yet what LP sent via transaction. It will be updated via _update() below
-      liquidity = Math.min(amount0.mul(_totalSupply) / _reserve0, amount1.mul(_totalSupply) / _reserve1);
+      liquidity = Math.min(amount0 * _totalSupply / _reserve0, amount1 * _totalSupply / _reserve1);
       // TODO: the above is :
       // (LP's added token0 * entire total share-tokens) / amount of token0 before LP adds
     }
@@ -223,8 +227,8 @@ contract TokenSwap is ITokenSwapPair, ERC20 {
 
     // send token0,1 to LP
     // TODO: 'to' is LP?
-    _safeTransfer(_token0, to, amount0);
-    _safeTransfer(_token1, to, amount1);
+    IERC20(token0).safeTransfer(to, amount0);
+    IERC20(token1).safeTransfer(to, amount1);
 
     // balance0,1 are now reduced since amount0,1 are subtracked  
     balance0 = IERC20(_token0).balanceOf(address(this));
@@ -256,8 +260,8 @@ contract TokenSwap is ITokenSwapPair, ERC20 {
     require(to != _token0 && to != _token1, 'TokenSwap: INVALID_TO');
     //TODO: need confirmation: checking again (amount0Out > 0) because one of amount0Out or amount1Out must be 0
     //sending token to trader
-    if(amount0Out > 0) _safeTransfer(_token0, to, amount0Out);  // TODO: why '_safeTransfer' instead of IERC20(_token0).transfer(...) ?
-    if(amount1Out > 0) _safeTransfer(_token1, to, amount1Out);
+    if(amount0Out > 0) IERC20(token0).safeTransfer(to, amount0Out); // TODO: why '_safeTransfer' instead of IERC20(_token0).transfer(...) ?
+    if(amount1Out > 0) IERC20(token1).safeTransfer(to, amount1Out);
     //TODO: where is the real implementation of "tokenSwapCall"? and what's the purpose? I guess it's a sort of callback for a custom function?
     if(data.length > 0) ITokenSwapCallee(to).tokenSwapCall(msg.sender, amount0Out, amount1Out, data);
 
@@ -299,10 +303,9 @@ contract TokenSwap is ITokenSwapPair, ERC20 {
     address _token0 = token0; // TODO: why gas saving? it's because of warm access?
     address _token1 = token1; // TODO: why gas saving?
 
-
     // TODO: where can I use this function?
-    _safeTransfer(_token0, to, IERC20(_token0).balanceOf(address(this)) - reserve0);
-    _safeTransfer(_token1, to, IERC20(_token1).balanceOf(address(this)) - reserve1);
+    IERC20(token0).safeTransfer(to, IERC20(_token0).balanceOf(address(this)) - reserve0);
+    IERC20(token1).safeTransfer(to, IERC20(_token1).balanceOf(address(this)) - reserve1);
   }
 
   /**
