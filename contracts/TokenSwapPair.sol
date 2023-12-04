@@ -11,7 +11,7 @@ import './interfaces/ITokenSwapCallee.sol';
 
 import { UD60x18, ud } from "@prb/math/src/UD60x18.sol";
 
-contract TokenSwap is ITokenSwapPair, ERC20 {
+contract TokenSwapPair is ITokenSwapPair, ERC20 {
   using SafeERC20 for IERC20;
 
   uint public constant MINIMUM_LIQUIDITY = 10**3;  // it is used when there is no totalSupply (share-token) => lock
