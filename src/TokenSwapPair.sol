@@ -70,7 +70,12 @@ contract TokenSwapPair is ITokenSwapPair, ERC20 {
       if balance0 is (type(uint112).max + 1) then reserve0 will be 1 instead of 4294967291
     */
     require(balance0 <= type(uint112).max && balance1 <= type(uint112).max, 'TokenSwap: OVERFLOW');
-    uint32 blockTimestamp = uint32(block.timestamp % 2**32);  // TODO: why it does that?
+    /**
+    That essentially clamps the value to 32 bits. Such that if timestamp ever becomes greater than type(uint32).max, 
+    it will restart from zero. That will happen sometime in 2100s. The idea is the unchecked subtraction in the following line will 
+    continue working properly even when timestamp overflows.
+    */
+    uint32 blockTimestamp = uint32(block.timestamp % 2**32);
     uint32 timeElapsed = blockTimestamp - blockTimestampLast; // to check how long time is passed
 
     if(timeElapsed > 0 && _reserve0 != 0 && _reserve1 != 0) {
@@ -135,7 +140,7 @@ contract TokenSwapPair is ITokenSwapPair, ERC20 {
   function _mintFee(uint112 _reserve0, uint112 _reserve1) private returns(bool feeOn) {
     address feeTo = ITokenSwapFactory(factory).feeTo();
     feeOn = feeTo != address(0);
-    uint _kLast = kLast;  // TODO: why it's gas savings?
+    uint _kLast = kLast;  // gas savings because it has to access storage variable and it's better caching in local variable.
 
     if(feeOn) {
       if(_kLast != 0) {
@@ -160,30 +165,55 @@ contract TokenSwapPair is ITokenSwapPair, ERC20 {
   // this low-level function should be called from a contract which performs important safety checks
   // mint fn creates share-token for LP (Liquidity Provider) who sent token0,1 to the pool
   function mint(address to) external lock returns(uint liquidity) {
-    (uint112 _reserve0, uint112 _reserve1,) = getReserves();   //TODO: why gas savings?
-    // balance0,1 are the most up to date number including the LP sent?
-    // TODO: When a LP sends tokens0 and 1, they go directly to token0,1 contract?
+    (uint112 _reserve0, uint112 _reserve1,) = getReserves(); // gas savings
+    /**
+    The flow of mint() usage:
+    1. LP approves tokens for Router to use
+    2. then calls router
+    3. The Router then does a transferFrom to the pair contract and call mint
+    4. So when mint() is called, there is already tokens in each token0,1 that LP sent
+    */
     uint balance0 = IERC20(token0).balanceOf(address(this));  // token that is stored in token0 contract. NOT this pair contract.
     uint balance1 = IERC20(token1).balanceOf(address(this));
-    // TODO: balance0 - reserve0 can mean currentValue - pastValue? it's because token0,1 are up to date?
-    uint amount0 = balance0 - reserve0; //TODO: shouldn't I check balance0 > reserve0? => otherwise the occurs error in case it becomes less than 0?
-    uint amount1 = balance1 - reserve1; //TODO: shouldn't I check balance1 > reserve1? => otherwise the occurs error in case it becomes less than 0?
+    /**
+      Q: shouldn't I check balance0 > reserve0? -> otherwise the occurs error in case it becomes less than 0?
+      A: If the Pair contract code is bug free (which it is), and the tokens in it behaving correctly, 
+      then balances can only be greater or equal to the reserves, because there isn't anywhere in the Pair 
+      contract where tokens are transferred out of the contract without updating the reserves. But yeah, 
+      if assumptions do not hold, that subtraction could underflow.
+    */
+    uint amount0 = balance0 - reserve0;
+    uint amount1 = balance1 - reserve1;
 
     bool feeOn = _mintFee(_reserve0, _reserve1);
-    //TODO: total supply is the total number of share-token, right?
     uint _totalSupply = totalSupply(); // gas savings, must be defined here since totalSupply can update in _mintFee
     if(_totalSupply == 0) {
-      // TODO: I guess it can be 2 secanarios either no liquidity providing or LP burned tokens?
+      /**
+        Q: I guess it can be 2 secanarios either no liquidity providing or LP burned tokens?
+        A: No, because MINIMUM_LIQUIDITY amount of liquidity is locked forever and cannot be burned.
+      */
       // TODO: I don't understand below logic
+      /**
+        Q: Why subtracts MINIMUM_LIQUIDITY?
+        A: It technically takes that amount from the initial liquidity provider, but it's a miniscule amount, 
+        so doesn't harm the LP.
+      */
       liquidity = Math.sqrt(amount0 * amount1) - MINIMUM_LIQUIDITY;
-      _mint(address(0), MINIMUM_LIQUIDITY); // permanently lock the first MINIMUM_LIQUIDITY tokens
+      /**
+        Q: why mints to address(0) (I meant some address for MINIMUM_LIQUIDITY)
+        A: To burn it. See inflation attack. https://mixbytes.io/blog/overview-of-the-inflation-attack
+      */
+      _mint(address(1), MINIMUM_LIQUIDITY); // permanently lock the first MINIMUM_LIQUIDITY tokens
 
     } else {
       // calculating share-token (i.e. liquidity). 
 
-      // TODO: amount0,1 are multiplied by totalSupply then devided by reserve0,1. Why?
       // _reserve0,1 tokens that are stored in this contract. At this point in mint fn, _reserve0,1 are not up to date compared to balance0,1 because 
       // _reserve0,1 don't have yet what LP sent via transaction. It will be updated via _update() below
+      /**
+        I think it tries to get ratio of amount0,1 from reserve0,1 in scale of totalSupply
+        Then take smaller one between amount0,1 and assign to 'liquidity'
+      */
       liquidity = Math.min(amount0 * _totalSupply / _reserve0, amount1 * _totalSupply / _reserve1);
       // TODO: the above is :
       // (LP's added token0 * entire total share-tokens) / amount of token0 before LP adds
@@ -247,13 +277,12 @@ contract TokenSwapPair is ITokenSwapPair, ERC20 {
     uint balance0;
     uint balance1;
 
-    { //TODO: I don't understand => scope for _token{0,1}, avoids stack too deep errors
+    { //TODO: I don't understand: scope for _token{0,1}, avoids stack too deep errors
     address _token0 = token0;
     address _token1 = token1;
 
     //TODO: 'to' should be a trader?
     require(to != _token0 && to != _token1, 'TokenSwap: INVALID_TO');
-    //TODO: need confirmation: checking again (amount0Out > 0) because one of amount0Out or amount1Out must be 0
     //sending token to trader
     if(amount0Out > 0) IERC20(token0).safeTransfer(to, amount0Out); // TODO: why '_safeTransfer' instead of IERC20(_token0).transfer(...) ?
     if(amount1Out > 0) IERC20(token1).safeTransfer(to, amount1Out);
@@ -264,9 +293,8 @@ contract TokenSwapPair is ITokenSwapPair, ERC20 {
     balance1 = IERC20(_token1).balanceOf(address(this));
     }
 
-
     /**
-    token that is sent from trader to the pool.
+    token that is sent from a trader to the pool.
     calculate how much trader sent.
     trader sends one type of tokens (ex: token0) and receive other token (ex: token1)
     so, one of them (amount0In and amount1In) is going to be 0 because trader didn't send
@@ -278,16 +306,17 @@ contract TokenSwapPair is ITokenSwapPair, ERC20 {
     require(amount0In > 0 || amount1In > 0, 'TokenSwap: INSUFFICIENT_INPUT_AMOUNT');
     {
     /**
-    TODO: Is this logic to calculate fee?
-    TODO: why scaling multiplying 1000? It's because Solidity doesn't have decimal for 0.3%?
-    TODO: 3 stands for 0.3% of fee for token swap
+    multiplying by 1000 because solidity cannot implement * 0.03. (3 stands for 0.3% of token swap fee)
     TODO: Where is the logic that checks 0.3% properly received?
     */
     uint balance0Adjusted = (balance0 * 1000) - (amount0In * 3);
     uint balance1Adjusted = (balance1 * 1000) - (amount1In * 3);
     
-    //TODO: what's the purpose of this check? the adjusted version should be always bigger?
-    require(balance0Adjusted * balance1Adjusted >= uint(_reserve0) * uint(_reserve1) * 1000**2, 'TokenSwap: K');
+    /** 
+      It is derived from core Uniswap invariant x*y=k. Basically 
+      this x_new * y_new >= x_old * y_old but with fees also taken into consideration.
+    */
+    require(balance0Adjusted * balance1Adjusted >= uint(_reserve0) * uint(_reserve1) * 1000**2, 'TokenSwap: K');  // whenever swap is called, K should be increased
     }
 
     _update(balance0, balance1, _reserve0, _reserve1);
