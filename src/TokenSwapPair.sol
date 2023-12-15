@@ -277,7 +277,13 @@ contract TokenSwapPair is ITokenSwapPair, ERC20 {
     uint balance0;
     uint balance1;
 
-    { //TODO: I don't understand: scope for _token{0,1}, avoids stack too deep errors
+    /**
+      EVM allows accessing the top 16 stack values through opcodes like DUP[1-16]. 
+      So if you have written a function that has lots of local variables that might 
+      take away all those slots and Solidity compiler doesn't know how to handle it. 
+      You can use scoping to workaround that.
+    */
+    { // scope for _token{0,1}, avoids stack too deep errors
     address _token0 = token0;
     address _token1 = token1;
 
@@ -286,7 +292,7 @@ contract TokenSwapPair is ITokenSwapPair, ERC20 {
     //sending token to trader
     if(amount0Out > 0) IERC20(token0).safeTransfer(to, amount0Out); // TODO: why '_safeTransfer' instead of IERC20(_token0).transfer(...) ?
     if(amount1Out > 0) IERC20(token1).safeTransfer(to, amount1Out);
-    //TODO: where is the real implementation of "tokenSwapCall"? and what's the purpose? I guess it's a sort of callback for a custom function?
+    // usage of tokenSwapCall() would be a contract that does flashloaning from the Pair contract.
     if(data.length > 0) ITokenSwapCallee(to).tokenSwapCall(msg.sender, amount0Out, amount1Out, data);
 
     balance0 = IERC20(_token0).balanceOf(address(this));
@@ -307,7 +313,6 @@ contract TokenSwapPair is ITokenSwapPair, ERC20 {
     {
     /**
     multiplying by 1000 because solidity cannot implement * 0.03. (3 stands for 0.3% of token swap fee)
-    TODO: Where is the logic that checks 0.3% properly received?
     */
     uint balance0Adjusted = (balance0 * 1000) - (amount0In * 3);
     uint balance1Adjusted = (balance1 * 1000) - (amount1In * 3);
@@ -323,11 +328,16 @@ contract TokenSwapPair is ITokenSwapPair, ERC20 {
     emit Swap(msg.sender, amount0In, amount1In, amount0Out, amount1Out, to);
   }
 
+  /**
+    It just allows you to withdraw tokens not yet incorporated to reserves.
+    An example is refletive tokens (which send X% fee to holders on each tx). 
+    Since the Pair contract would be a holder, its balance would be increasing, 
+    but that would not be reflected to the reserves. So it allows someone to just withdraw those extra tokens.
+  */
   function skim(address to) external lock {
-    address _token0 = token0; // TODO: why gas saving? it's because of warm access?
-    address _token1 = token1; // TODO: why gas saving?
+    address _token0 = token0;
+    address _token1 = token1;
 
-    // TODO: where can I use this function?
     IERC20(token0).safeTransfer(to, IERC20(_token0).balanceOf(address(this)) - reserve0);
     IERC20(token1).safeTransfer(to, IERC20(_token1).balanceOf(address(this)) - reserve1);
   }
