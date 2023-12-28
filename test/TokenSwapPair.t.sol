@@ -158,7 +158,7 @@ contract TokenSwapPairTest is Test {
 
     function testSwap2() public {
         uint256[] memory swapTestCase2 = new uint256[](4);
-        swapTestCase2[0] = 2 * decimal;             // swap amount that swapper put into pool. In this case, it's token0's token
+        swapTestCase2[0] = 2 * decimal;              // swap amount that swapper put into pool. In this case, it's token0's token
         swapTestCase2[1] = 100 * decimal;            // token0 initial amount
         swapTestCase2[2] = 66 * decimal;             // token1 initial amount
         swapTestCase2[3] = 1290311194776163303;      // expected return to swapper
@@ -180,7 +180,7 @@ contract TokenSwapPairTest is Test {
         swapTestCase3[0] = 4 * decimal;             // swap amount that swapper put into pool. In this case, it's token0's token
         swapTestCase3[1] = 100 * decimal;           // token0 initial amount
         swapTestCase3[2] = 100 * decimal;           // token1 initial amount
-        swapTestCase3[3] = 3835057891295149440;      // expected return to swapper.
+        swapTestCase3[3] = 3835057891295149440;     // expected return to swapper.
 
         // set up token0,1 current token situation
         token0.transfer(address(pairContract), swapTestCase3[1]);
@@ -196,8 +196,8 @@ contract TokenSwapPairTest is Test {
     function testSwap4() public {
         uint256[] memory swapTestCase4 = new uint256[](4);
         swapTestCase4[0] = 1 * decimal;             // swap amount that swapper put into pool. In this case, it's token0's token
-        swapTestCase4[1] = 1000 * decimal;           // token0 initial amount
-        swapTestCase4[2] = 1000 * decimal;           // token1 initial amount
+        swapTestCase4[1] = 1000 * decimal;          // token0 initial amount
+        swapTestCase4[2] = 1000 * decimal;          // token1 initial amount
         swapTestCase4[3] = 996006981039903216;      // expected return to swapper.
 
         // set up token0,1 current token situation
@@ -209,5 +209,136 @@ contract TokenSwapPairTest is Test {
         token0.transfer(address(pairContract), swapTestCase4[0]);
         // if no revert, then it's passed
         pairContract.swap(0, swapTestCase4[3], swapper, ""); 
+    }
+
+    // unhappy path
+    function testSwap5() public {
+        uint256[] memory swapTestCase4 = new uint256[](4);
+        swapTestCase4[0] = 1 * decimal;             // swap amount that swapper put into pool. In this case, it's token0's token
+        swapTestCase4[1] = 1000 * decimal;          // token0 initial amount
+        swapTestCase4[2] = 1000 * decimal;          // token1 initial amount
+        swapTestCase4[3] = 996006981039903216;      // expected return to swapper.
+
+        // set up token0,1 current token situation
+        token0.transfer(address(pairContract), swapTestCase4[1]);
+        token1.transfer(address(pairContract), swapTestCase4[2]);
+        pairContract.mint(lp);
+
+        // swaper sends token to the pool for exchange
+        token0.transfer(address(pairContract), swapTestCase4[0]);
+        uint256 wrongOutput = swapTestCase4[3] + 1;
+        
+        vm.expectRevert('TokenSwap: K');
+        pairContract.swap(0, wrongOutput, swapper, ""); 
+    }
+
+    // unhappy path
+    function testSwap6() public {
+        uint256[] memory swapTestCase = new uint256[](4);
+        swapTestCase[0] = 1 * decimal;             // swap amount that swapper put into pool. In this case, it's token0's token
+        swapTestCase[1] = 1000 * decimal;          // token0 initial amount
+        swapTestCase[2] = 1000 * decimal;          // token1 initial amount
+        swapTestCase[3] = 996006981039903216;      // expected return to swapper.
+
+        // set up token0,1 current token situation
+        token0.transfer(address(pairContract), swapTestCase[1]);
+        token1.transfer(address(pairContract), swapTestCase[2]);
+        pairContract.mint(lp);
+
+        // swaper sends token to the pool for exchange
+        
+        token0.transfer(address(pairContract), swapTestCase[0]);
+        uint256 wrongOutput = swapTestCase[3] + 1;
+        
+        vm.expectRevert('TokenSwap: K');
+        pairContract.swap(0, wrongOutput, swapper, ""); 
+    }
+
+    // unhappy path
+    function testSwap7() public {
+        vm.expectRevert('TokenSwap: INSUFFICIENT_OUTPUT_AMOUNT');
+        pairContract.swap(0, 0, swapper, ""); 
+    }
+
+    // unhappy path
+    function testSwap8() public {
+        uint256[] memory swapTestCase = new uint256[](3);
+        swapTestCase[0] = 1 * decimal;           // swap amount that swapper put into pool. In this case, it's token0's token
+        swapTestCase[1] = 1 * decimal;           // token0 initial amount
+        swapTestCase[2] = 1 * decimal;           // token1 initial amount
+
+        // set up token0,1 current token situation
+        token0.transfer(address(pairContract), swapTestCase[1]);
+        token1.transfer(address(pairContract), swapTestCase[2]);
+        pairContract.mint(lp);
+
+        // swaper sends token to the pool for exchange
+        token0.transfer(address(pairContract), swapTestCase[0]);
+        
+        vm.expectRevert('TokenSwap: INSUFFICIENT_LIQUIDITY');
+        pairContract.swap(10 * decimal, 10 * decimal, swapper, ""); 
+    }
+
+    // unhappy path
+    function testSwap9() public {
+        uint256[] memory swapTestCase = new uint256[](4);
+        swapTestCase[0] = 1 * decimal;             // swap amount that swapper put into pool. In this case, it's token0's token
+        swapTestCase[1] = 1000 * decimal;          // token0 initial amount
+        swapTestCase[2] = 1000 * decimal;          // token1 initial amount
+        swapTestCase[3] = 996006981039903216;      // expected return to swapper.
+
+        // set up token0,1 current token situation
+        token0.transfer(address(pairContract), swapTestCase[1]);
+        token1.transfer(address(pairContract), swapTestCase[2]);
+        pairContract.mint(lp);
+
+        // swaper sends token to the pool for exchange
+        token0.transfer(address(pairContract), swapTestCase[0]);
+
+        vm.expectRevert('TokenSwap: INVALID_TO');
+        pairContract.swap(0, swapTestCase[3], address(token0), ""); 
+    }
+
+    // unhappy path
+    function testSwap10() public {
+        uint256[] memory swapTestCase = new uint256[](4);
+        swapTestCase[0] = 1 * decimal;             // swap amount that swapper put into pool. In this case, it's token0's token
+        swapTestCase[1] = 1000 * decimal;          // token0 initial amount
+        swapTestCase[2] = 1000 * decimal;          // token1 initial amount
+        swapTestCase[3] = 996006981039903216;      // expected return to swapper.
+
+        // set up token0,1 current token situation
+        token0.transfer(address(pairContract), swapTestCase[1]);
+        token1.transfer(address(pairContract), swapTestCase[2]);
+        pairContract.mint(lp);
+
+        /**
+        below code is simulating that trader sent token to the pool.
+        Without it, it will occur an error
+        */
+        // token0.transfer(address(pairContract), swapTestCase[0]);
+
+        vm.expectRevert('TokenSwap: INSUFFICIENT_INPUT_AMOUNT');
+        pairContract.swap(0, swapTestCase[3], swapper, ""); 
+    }
+
+    // unhappy path
+    function testSwap11() public {
+        uint256[] memory swapTestCase = new uint256[](4);
+        swapTestCase[0] = 1 * decimal;             // swap amount that swapper put into pool. In this case, it's token0's token
+        swapTestCase[1] = 1000 * decimal;          // token0 initial amount
+        swapTestCase[2] = 1000 * decimal;          // token1 initial amount
+        swapTestCase[3] = 996006981039903216;      // expected return to swapper.
+
+        // set up token0,1 current token situation
+        token0.transfer(address(pairContract), swapTestCase[1]);
+        token1.transfer(address(pairContract), swapTestCase[2]);
+        pairContract.mint(lp);
+
+        // swaper sends token to the pool for exchange
+        token0.transfer(address(pairContract), swapTestCase[0]);
+
+        vm.expectRevert('TokenSwap: INSUFFICIENT_INPUT_AMOUNT');
+        pairContract.swap(0, swapTestCase[3], swapper, ""); 
     }
 }
