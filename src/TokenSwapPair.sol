@@ -306,7 +306,7 @@ contract TokenSwapPair is ITokenSwapPair, ERC20 {
     so, one of them (amount0In and amount1In) is going to be 0 because trader didn't send
     */
     uint amount0In = balance0 > _reserve0 - amount0Out ? balance0 - (_reserve0 - amount0Out) : 0;
-    uint amount1In = balance1 > _reserve1 - amount1Out ? balance0 - (_reserve1 - amount1Out) : 0;
+    uint amount1In = balance1 > _reserve1 - amount1Out ? balance1 - (_reserve1 - amount1Out) : 0;
 
     // One of then must be greater than 0 because trader must sent at least one token to swap
     require(amount0In > 0 || amount1In > 0, 'TokenSwap: INSUFFICIENT_INPUT_AMOUNT');
